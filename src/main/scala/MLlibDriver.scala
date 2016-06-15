@@ -21,28 +21,15 @@ import org.json4s._
 import org.json4s.jackson.JsonMethods._
 import org.json4s.{DefaultFormats, Formats}
 
-//import org.deeplearning4j.nn.api.OptimizationAlgorithm
-//import org.deeplearning4j.nn.conf.MultiLayerConfiguration
-//import org.deeplearning4j.nn.conf.NeuralNetConfiguration
-//import org.deeplearning4j.nn.conf.Updater
-//import org.deeplearning4j.nn.conf.layers.OutputLayer
-//import org.deeplearning4j.nn.conf.layers.RBM
-//import org.deeplearning4j.nn.weights.WeightInit
-//import org.nd4j.linalg.lossfunctions.LossFunctions
-//import org.deeplearning4j.spark.ml.classification._
-//import org.deeplearning4j.spark.ml._
-//import org.deeplearning4j.spark.impl.multilayer.SparkDl4jMultiLayer
-
 import scala.io.Source
 import scala.sys.process._
-
 /**
   * Created by avishaylivne on 1/17/16.
   */
 
 object MLlibDriver {
   val usage = """
-    Usage: mllibDriver dataPath modelPath modelName [predictionsPath]
+    Usage: mllibDriver trainOrPredict dataPath modelPath modelName labelsPath (predictionsPath | modelParams)
         trainOrPredict: If "train", train a new model on labeled data. Otherwise apply an existing model on data to
                         predict labels.
 
