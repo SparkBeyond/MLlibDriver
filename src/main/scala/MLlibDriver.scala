@@ -29,7 +29,9 @@ import scala.sys.process._
 
 object MLlibDriver {
   val usage = """
-    Usage: mllibDriver trainOrPredict dataPath modelPath modelName labelsPath (predictionsPath | modelParams)
+    Usage: mllibDriver "train" dataPath modelPath modelName labelsPath isClassification modelParams
+					or
+           mllibDriver "predict" dataPath modelPath modelName labelsPath isClassification predictionsPath
         trainOrPredict: If "train", train a new model on labeled data. Otherwise apply an existing model on data to
                         predict labels.
 
@@ -42,25 +44,31 @@ object MLlibDriver {
         labelsPath: Path to file where the indexed labels will be saved.
                     Only used in classification tasks (not in regression tasks).
 
-        The last arguments should be either predictionsPath or modelParams.
+				isClassification: Whether the target label is categorical (classification) or numeric (regression).
+
+        The last arguments should be either modelParams (if training) or predictionsPath (if predicting)
+
+				modelParams: Map[String,Any] encoded as JSON string with model parameters the model should use.
 
         predictionsPath: If set, apply existing model on data to predict labels and save predictions in this path.
                          If omitted, train new model on labeled data.
 
-        modelParams: Map[String,Any] encoded as JSON string with model parameters the model should use.
               """
 
   def main(args: Array[String]): Unit = {
-    if (args.length != 6) {
+    if (args.length != 7) {
       println(usage)
       return
     }
     Logger.getLogger("org").setLevel(Level.WARN)
     Logger.getLogger("akka").setLevel(Level.WARN)
-    if (args(0) == "train") {
-      train(dataPath=args(1), modelPath=args(2), modelName=args(3), labelsPath=args(4), modelParamsString=args(5))
+		val isClassification = args(5).toLowerCase == "true"
+		if (args(0) == "train") {
+      train(dataPath=args(1), modelPath=args(2), modelName=args(3), labelsPath=args(4),
+				isClassification=isClassification, modelParamsString=args(6))
     } else {
-      predict(dataPath=args(1), modelPath=args(2), modelName=args(3), labelsPath=args(4), predictionsPath=args(5))
+      predict(dataPath=args(1), modelPath=args(2), modelName=args(3), labelsPath=args(4),
+				isClassification=isClassification, predictionsPath=args(6))
     }
   }
 
@@ -92,7 +100,8 @@ object MLlibDriver {
   //      .build()
   //  }
 
-  def train(dataPath: String, modelPath: String, modelName: String, labelsPath: String, modelParamsString: String) = {
+  def train(dataPath: String, modelPath: String, modelName: String, labelsPath: String, isClassification: Boolean,
+						modelParamsString: String) = {
     val conf = new SparkConf().setAppName(s"MLlib train $modelName")
     val sc = new SparkContext(conf)
     val sqlContext = new SQLContext(sc)
@@ -110,37 +119,37 @@ object MLlibDriver {
     //      oos.writeObject(model)
     //      oos.close
     //    } else {
+		implicit val formats = DefaultFormats
+		val modelParams = parse(modelParamsString).values.asInstanceOf[Map[String,Any]]
     val modelBuilder = modelName match {
-      case "MLlibLogisticRegression" => {
+      case "MLlibLinearModel" if isClassification => {
         data = indexLabels(rawData, labelsPath)
         val m = new LogisticRegression()
         m.setRegParam(0.1)
         m
       }
-      case "MLlibLinearRegression" => {
+      case "MLlibLinearModel" if !isClassification => {
         val m = new LinearRegression()
         m.setRegParam(0.1)
         m
       }
-      case "MLlibDecisionTreeClassifier" => {
+      case "MLlibDecisionTree" if isClassification => {
         data = indexLabels(rawData, labelsPath)
         new DecisionTreeClassifier()
       }
-      case "MLlibNaiveBayes" => {
+      case "MLlibNaiveBayes" if isClassification => {
         data = indexLabels(rawData, labelsPath)
         new NaiveBayes()
       }
-      case "MLlibRandomForestClassifier" => {
+      case "MLlibRandomForest" if isClassification => {
         data = indexLabels(rawData, labelsPath)
         new RandomForestClassifier()
       }
-      case "MLlibDecisionTreeRegressor" => new DecisionTreeRegressor()
-      case "MLlibGBTRegressor" => new GBTRegressor()
-      case "MLlibRandomForestRegressor" => new RandomForestRegressor()
+      case "MLlibDecisionTree" if !isClassification => new DecisionTreeRegressor()
+      case "MLlibGBTRegressor" if !isClassification => new GBTRegressor()
+      case "MLlibRandomForest" if !isClassification => new RandomForestRegressor()
       case _ => throw new IllegalArgumentException(s"Model $modelName is not supported")
     }
-    implicit val formats = DefaultFormats
-    val modelParams = parse(modelParamsString).values.asInstanceOf[Map[String,Any]]
     modelParams.foreach{x =>
       if (modelBuilder.hasParam(x._1)) {
         //TODO(avishay): find a better way to force BigInts into Ints
@@ -180,7 +189,8 @@ object MLlibDriver {
       .withColumnRenamed("fixedProbability", "probability")
   }
 
-  def predict(dataPath: String, modelPath: String, modelName: String, labelsPath: String, predictionsPath: String) = {
+  def predict(dataPath: String, modelPath: String, modelName: String, labelsPath: String, isClassification: Boolean,
+							predictionsPath: String) = {
     val conf = new SparkConf().setAppName(s"MLlib predict $modelName")
     val sc = new SparkContext(conf)
     val sqlContext = new SQLContext(sc)
@@ -191,14 +201,14 @@ object MLlibDriver {
       }).toDF("label", "features")
     val is = new ObjectInputStream(new FileInputStream(modelPath))
     val predictions = modelName match {
-      case "MLlibLogisticRegression" => fixPredictions(is.readObject().asInstanceOf[LogisticRegressionModel].transform(data), labelsPath)
-      case "MLlibLinearRegression" => is.readObject().asInstanceOf[LinearRegressionModel].transform(data).select("prediction")
-      case "MLlibDecisionTreeClassifier" => fixPredictions(is.readObject().asInstanceOf[DecisionTreeClassificationModel].transform(data), labelsPath)
-      case "MLlibNaiveBayes" => fixPredictions(is.readObject().asInstanceOf[NaiveBayesModel].transform(data), labelsPath)
-      case "MLlibRandomForestClassifier" => fixPredictions(is.readObject().asInstanceOf[RandomForestClassificationModel].transform(data), labelsPath)
-      case "MLlibDecisionTreeRegressor" => is.readObject().asInstanceOf[DecisionTreeRegressionModel].transform(data).select("prediction")
-      case "MLlibGBTRegressor" => is.readObject().asInstanceOf[GBTRegressionModel].transform(data).select("prediction")
-      case "MLlibRandomForestRegressor" => is.readObject().asInstanceOf[RandomForestRegressionModel].transform(data).select("prediction")
+      case "MLlibLinearModel" if isClassification => fixPredictions(is.readObject().asInstanceOf[LogisticRegressionModel].transform(data), labelsPath)
+      case "MLlibLinearModel" if !isClassification => is.readObject().asInstanceOf[LinearRegressionModel].transform(data).select("prediction")
+      case "MLlibDecisionTree" if isClassification => fixPredictions(is.readObject().asInstanceOf[DecisionTreeClassificationModel].transform(data), labelsPath)
+			case "MLlibDecisionTree" if !isClassification => is.readObject().asInstanceOf[DecisionTreeRegressionModel].transform(data).select("prediction")
+      case "MLlibNaiveBayes" if isClassification => fixPredictions(is.readObject().asInstanceOf[NaiveBayesModel].transform(data), labelsPath)
+			case "MLlibRandomForest" if isClassification => fixPredictions(is.readObject().asInstanceOf[RandomForestClassificationModel].transform(data), labelsPath)
+			case "MLlibRandomForest" if !isClassification => is.readObject().asInstanceOf[RandomForestRegressionModel].transform(data).select("prediction")
+      case "MLlibGBTRegressor" if !isClassification => is.readObject().asInstanceOf[GBTRegressionModel].transform(data).select("prediction")
       case _ => throw new IllegalArgumentException(s"Model $modelName is not supported")
     }
     is.close()
