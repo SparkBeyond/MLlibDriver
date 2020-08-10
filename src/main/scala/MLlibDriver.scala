@@ -2,27 +2,18 @@ package core.learn.trainers
 
 import java.io._
 
-import org.apache.log4j.Logger
-import org.apache.log4j.Level
-import org.apache.spark.SparkConf
-import org.apache.spark.SparkContext
-import org.apache.spark.SparkContext._
-import org.apache.spark.ml.param.{DoubleParam, BooleanParam, IntParam, Param}
-import org.apache.spark.ml.{Predictor, Estimator}
+import org.apache.log4j.{Level, Logger}
+import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.ml.classification._
 import org.apache.spark.ml.feature.StringIndexer
 import org.apache.spark.ml.regression._
 import org.apache.spark.mllib.linalg._
-import org.apache.spark.sql.DataFrame
-import org.apache.spark.sql.SaveMode
-import org.apache.spark.sql.SQLContext
+import org.apache.spark.sql.{DataFrame, SQLContext, SaveMode}
 import org.apache.spark.sql.functions._
-import org.json4s._
+import org.json4s.{DefaultFormats, _}
 import org.json4s.jackson.JsonMethods._
-import org.json4s.{DefaultFormats, Formats}
 
 import scala.io.Source
-import scala.sys.process._
 /**
   * Created by avishaylivne on 1/17/16.
   */
@@ -212,7 +203,7 @@ object MLlibDriver {
       case _ => throw new IllegalArgumentException(s"Model $modelName is not supported")
     }
     is.close()
-    predictions.write.mode(SaveMode.Overwrite).json(predictionsPath)
+    predictions.coalesce(1).write.mode(SaveMode.Overwrite).json(predictionsPath)
     println(s"Applied $modelName model on ${predictions.count} rows.")
   }
 }
